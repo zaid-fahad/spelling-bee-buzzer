@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Buzzer Display</title>
+<style>
+body { font-family: Arial; background:#111; color:#fff; text-align:center; padding:20px; }
+h1 { font-size:48px; color:#f0a500; margin-bottom:10px; }
+#info { font-size:22px; margin-bottom:20px; }
+#players-container { display:flex; justify-content:center; flex-wrap:wrap; gap:20px; margin-bottom:30px; }
+.player-card { min-width:140px; padding:20px; border-radius:15px; background:#222; font-size:24px; font-weight:bold; transition: all 0.3s ease; }
+.player-card.active { transform:scale(1.2); background:#f0a500; color:#111; }
+.player-card.buzzed { opacity:0.8; background:#444; }
+.player-card.winner { background:#00ff00; color:#111; transform:scale(1.3); box-shadow:0 0 20px #0f0; }
+table { margin:0 auto; border-collapse:collapse; width:90%; max-width:700px; font-size:20px; margin-bottom:30px; }
+th, td { border:1px solid #f0a500; padding:10px; text-align:center; }
+th { background:#222; color:#f0a500; }
+td { background:#111; }
+</style>
+</head>
+<body>
+
+<h1>Buzzer Display</h1>
+
+<div id="info">
+  Round: <span id="round-number">1</span> | Winner: <span id="winner">—</span>
+</div>
+
+<div id="players-container">
+  <div class="player-card" id="p1">P1<br><span class="timestamp">—</span></div>
+  <div class="player-card" id="p2">P2<br><span class="timestamp">—</span></div>
+  <div class="player-card" id="p3">P3<br><span class="timestamp">—</span></div>
+  <div class="player-card" id="p4">P4<br><span class="timestamp">—</span></div>
+</div>
+
+<h2>Queue</h2>
+<table>
+  <thead><tr><th>Order</th><th>Player</th><th>Timestamp</th></tr></thead>
+  <tbody id="queue-body"><tr><td colspan="3">No buzzers yet</td></tr></tbody>
+</table>
+
+<h2>Round-wise Winners</h2>
+<table>
+  <thead><tr><th>Round</th><th>Winner</th><th>Time</th></tr></thead>
+  <tbody id="winners-body"><tr><td colspan="3">No rounds yet</td></tr></tbody>
+</table>
+
+<script>
+// ---- INITIALIZE ----
+const ws = new WebSocket("ws://localhost:9394");
+
+const playerDivs = [null,
+  document.getElementById('p1'),
+  document.getElementById('p2'),
+  document.getElementById('p3'),
+  document.getElementById('p4')
+];
+
+const queueBody = document.getElementById('queue-body');
+const winnersBody = document.getElementById('winners-body');
+const roundNumberSpan = document.getElementById('round-number');
+const winnerSpan = document.getElementById('winner');
+
+let playerTimestamps = [null,null,null,null,null];
+let currentWinner = null;
+
+// ---- HELPERS ----
+function formatTime(isoStr){
+  const d = new Date(isoStr);
+  return d.toLocaleTimeString() + '.' + d.getMilliseconds().toString().padStart(3,'0');
+}
+
+// ---- WEBSOCKET HANDLER ----
+ws.onmessage = (msg) => {
+  const data = JSON.parse(msg.data);
+
+  // ---- Queue Update ----
+  if(data.type === 'queue'){
+    const queue = data.queue || [];
+
+    // Reset all player cards
+    for(let i=1;i<=4;i++){
+      playerDivs[i].classList.remove('active','buzzed','winner');
+      playerDivs[i].querySelector('.timestamp').textContent = '—';
+      playerTimestamps[i] = null;
+    }
+
+    // Update queue cards
+    queue.forEach((item, idx)=>{
+      const p = item.player;
+      const ts = formatTime(item.time);
+      playerTimestamps[p] = ts;
+
+      if(idx===0){
+        playerDivs[p].classList.add('active');
+        currentWinner = p;
+        winnerSpan.textContent = `P${p}`;
+      } else {
+        playerDivs[p].classList.add('buzzed');
+      }
+      playerDivs[p].querySelector('.timestamp').textContent = ts;
+    });
+
+    // Update queue table
+    queueBody.innerHTML = "";
+    if(queue.length === 0){
+      queueBody.innerHTML = '<tr><td colspan="3">No buzzers yet</td></tr>';
+      winnerSpan.textContent = '—';
+      currentWinner = null;
+    } else {
+      queue.forEach((item,idx)=>{
+        const p = item.player;
+        queueBody.innerHTML += `<tr><td>${idx+1}</td><td>P${p}</td><td>${playerTimestamps[p]}</td></tr>`;
+      });
+    }
+  }
+
+  // ---- Round Winners Update ----
+  if(data.type === 'round-winners'){
+    const winners = data.winners || [];
+    roundNumberSpan.textContent = data.round || 1;
+
+    winnersBody.innerHTML = "";
+    if(winners.length === 0){
+      winnersBody.innerHTML='<tr><td colspan="3">No rounds yet</td></tr>';
+    } else {
+      winners.forEach(r=>{
+        winnersBody.innerHTML += `<tr><td>${r.round}</td><td>P${r.winner}</td><td>${formatTime(r.time)}</td></tr>`;
+      });
+    }
+
+    // Highlight current winner if exists
+    if(currentWinner){
+      playerDivs[currentWinner].classList.add('winner');
+    }
+  }
+};
+
+ws.onopen = ()=>console.log("Display WS Connected");
+</script>
+
+</body>
+</html>

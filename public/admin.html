@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Buzzer Admin</title>
+<style>
+body{
+    font-family: Arial, sans-serif;
+    background:#111;
+    color:#fff;
+    text-align:center;
+    padding:20px;
+}
+h1{
+    font-size:48px;
+    color:#f0a500;
+    margin-bottom:20px;
+}
+button{
+    margin:10px;
+    padding:15px 30px;
+    font-size:20px;
+    border:none;
+    border-radius:12px;
+    cursor:pointer;
+    background:#f0a500;
+    color:#111;
+    font-weight:bold;
+    transition: all 0.2s ease;
+}
+button:hover:not(:disabled){transform:scale(1.05);}
+button:active{transform:translateY(2px);}
+button:disabled{
+    background:#444;
+    color:#888;
+    cursor:not-allowed;
+}
+#status{
+    margin-top:20px;
+    font-size:22px;
+    margin-bottom:20px;
+    min-height:28px;
+}
+#queue-display{
+    display:flex;
+    justify-content:center;
+    gap:20px;
+    margin-top:20px;
+    font-size:24px;
+    min-height:80px;
+    transition: all 0.3s ease;
+}
+.queue-card{
+    min-width:100px;
+    padding:15px 20px;
+    border-radius:12px;
+    background:#222;
+    color:#fff;
+    font-weight:bold;
+    transition: all 0.3s ease;
+}
+.queue-card.current{
+    background:#f0a500;
+    color:#111;
+    transform: scale(1.2);
+}
+.queue-card.next{
+    background:#444;
+    color:#f0a500;
+}
+.queue-card.winner{
+    background: #28a745;
+    color: #fff;
+    transform: scale(1.3);
+}
+.queue-card.removed{
+    opacity:0;
+    transform: translateY(-30px) scale(0.8);
+    transition: all 0.3s ease;
+}
+</style>
+</head>
+<body>
+
+<h1>Buzzer Admin</h1>
+
+<div>
+    <button id="resetQueue" onclick="resetQueue()">Reset Queue</button>
+    <button id="nextPlayer" onclick="nextPlayer()">Next Player</button>
+    <button id="declareWinnerBtn" onclick="declareWinner()">Declare Winner</button>
+    <button id="newRound" onclick="send({type:'NEW_ROUND'})">Start New Round</button>
+    <button id="resetRounds" onclick="send({type:'RESET_ROUNDS'})">Reset All Rounds</button>
+</div>
+
+<div id="status">Queue: —</div>
+
+<h2>Current Queue</h2>
+<div id="queue-display">
+    <!-- Player cards will appear here -->
+</div>
+
+<script>
+const ws = new WebSocket("ws://localhost:9394");
+
+let winnerDeclared = false;
+let currentQueue = [];
+let winner = null;
+
+// ---- SEND HELPER ----
+function send(obj){ ws.send(JSON.stringify(obj)); }
+
+// ---- RESET QUEUE ----
+function resetQueue(){
+    if(winnerDeclared) return;
+    send({type:'RESET'});
+}
+
+// ---- DECLARE WINNER ----
+function declareWinner(){
+    if(winnerDeclared){
+        alert("Winner already declared!");
+        return;
+    }
+    if(currentQueue.length === 0){
+        alert("Queue is empty!");
+        return;
+    }
+
+    // Set winner as the first player in queue, but DO NOT modify the queue
+    winnerDeclared = true;
+    winner = currentQueue[0]; 
+    send({type:'DECLARE_WINNER', player: winner.player});
+
+    updateButtons();
+    updateStatus();
+    renderQueue();
+}
+
+// ---- NEXT PLAYER ----
+function nextPlayer(){
+    if(currentQueue.length === 0 || winnerDeclared){
+        return;
+    }
+    const firstCard = document.querySelector('#queue-display .queue-card.current');
+    if(firstCard){
+        firstCard.classList.add('removed');
+        setTimeout(()=>{
+            send({type:'NEXT'});
+        }, 300);
+    } else {
+        send({type:'NEXT'});
+    }
+}
+
+// ---- RENDER QUEUE ----
+function renderQueue(){
+    const display = document.getElementById('queue-display');
+    display.innerHTML = "";
+
+    if(winnerDeclared && winner){
+        const winnerCard = document.createElement('div');
+        winnerCard.classList.add('queue-card','winner');
+        winnerCard.textContent = `🏆 P${winner.player}`;
+        display.appendChild(winnerCard);
+    }
+
+    if(currentQueue.length === 0){
+        if(!winnerDeclared){
+            display.innerHTML += `<div class="queue-card">No players</div>`;
+        }
+    } else {
+        currentQueue.forEach((item, idx)=>{
+            // skip showing winner in queue
+            if(winnerDeclared && winner && item.player === winner.player) return;
+
+            const card = document.createElement('div');
+            card.classList.add('queue-card');
+            if(idx===0 && (!winnerDeclared || item.player !== winner.player)) card.classList.add('current');
+            else card.classList.add('next');
+            card.textContent = `P${item.player}`;
+            display.appendChild(card);
+        });
+    }
+}
+
+// ---- UPDATE STATUS QUEUE ----
+function updateStatus(){
+    const statusDiv = document.getElementById('status');
+
+    if(currentQueue.length === 0 && !winnerDeclared){
+        statusDiv.textContent = "Queue: —";
+    } else if(winnerDeclared && winner){
+        statusDiv.textContent = `🏆 Winner: P${winner.player}`;
+    } else {
+        const queueText = currentQueue.map((p,i)=>i===0?`➡ P${p.player}`:`P${p.player}`).join(" | ");
+        statusDiv.textContent = `Queue: ${queueText}`;
+    }
+}
+
+// ---- BUTTON STATE MANAGEMENT ----
+function updateButtons(){
+    const resetQueueBtn = document.getElementById('resetQueue');
+    const nextBtn = document.getElementById('nextPlayer');
+    const declareBtn = document.getElementById('declareWinnerBtn');
+
+    declareBtn.disabled = winnerDeclared || currentQueue.length === 0;
+    resetQueueBtn.disabled = winnerDeclared || currentQueue.length === 0;
+    nextBtn.disabled = winnerDeclared || currentQueue.length === 0;
+}
+
+// ---- WEBSOCKET HANDLER ----
+ws.onmessage = (msg)=>{
+    const data = JSON.parse(msg.data);
+
+    if(data.type === 'queue'){
+        currentQueue = data.queue || [];
+        renderQueue();
+        updateButtons();
+        updateStatus();
+    }
+
+    if(data.type === 'round-winners'){
+        winnerDeclared = false;
+        winner = null;
+        currentQueue = data.queue || [];
+        renderQueue();
+        updateButtons();
+        updateStatus();
+    }
+};
+
+ws.onopen = ()=>console.log("Admin WS Connected");
+</script>
+</body>
+</html>
